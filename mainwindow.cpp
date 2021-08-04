@@ -16,15 +16,9 @@ MainWindow::MainWindow(QWidget *parent)
     auto bar = new QToolBar;
     auto a = bar->addAction("Next");
     connect(a, &QAction::triggered, wid, &Widget::loadNext);
-    auto timerCheck = new QCheckBox("Auto");
-    bar->addWidget(timerCheck);
-    connect(timerCheck, &QCheckBox::toggled, this, [=] (bool checked){
-        checked ? timer->start() : timer->stop();
-    });
-    connect(timer, &QTimer::timeout, wid, &Widget::loadNext);
-
+    bar->addSeparator();
     auto timerSpin = new QSpinBox;
-    timerSpin->setSuffix("ms");
+    timerSpin->setSuffix(" ms");
     timerSpin->setMinimum(10);
     timerSpin->setMaximum(2000);
     timerSpin->setSingleStep(10);
@@ -32,7 +26,37 @@ MainWindow::MainWindow(QWidget *parent)
     bar->addWidget(timerSpin);
     connect(timerSpin, QOverload<int>::of(&QSpinBox::valueChanged), timer, QOverload<int>::of(&QTimer::setInterval));
 
+    auto playAction = bar->addAction("Play");
+    playAction->setCheckable(true);
+    connect(playAction, &QAction::toggled, this, [=] (bool checked) {
+        if (checked) {
+            playAction->setText("Stop");
+            timer->start();
+        }
+        else {
+            playAction->setText("Play");
+            timer->stop();
+        }
+    });
+    connect(timer, &QTimer::timeout, wid, &Widget::loadNext);
+    bar->addSeparator();
+    a = bar->addAction("Clear");
+    connect(a, &QAction::triggered, this, [=] {
+        if (playAction->isChecked())
+            playAction->setChecked(false);
+        wid->clear();
+    });
+    bar->addSeparator();
+    a = bar->addAction("Save");
+    connect(a, &QAction::triggered, wid, &Widget::saveImage);
+    a = bar->addAction("Load");
+    connect(a, &QAction::triggered, this, [=] {
+        if (playAction->isChecked())
+            playAction->setChecked(false);
+        wid->loadImage();
+    });
     addToolBar(bar);
+    resize(800,600);
 }
 
 
@@ -41,17 +65,13 @@ Widget::Widget(QWidget *parent)
 {
     setMouseTracking(true);
 
-    cellSize = 10;
+    cellSize = 8;
     cols = 200;
     rows = 156;
+    board = QVector<QVector<bool>>(cols);
+    for (int col  = 0; col < cols; ++col)
+        board[col] = QVector<bool>(rows);
 
-    for (int col  = 0; col < cols; ++col) {
-//        QList<bool> rowList;
-        board.append(QList<bool>());
-        for (int row = 0; row < rows; ++row) {
-            board[col].append(false);
-        }
-    }
 //    https://conwaylife.appspot.com/pattern/acorn
 //    board[141][70] = true;
 //    board[140][72] = true;
@@ -61,7 +81,7 @@ Widget::Widget(QWidget *parent)
 //    board[145][72] = true;
 //    board[146][72] = true;
 
-    https://www.conwaylife.com/w/images/9/9f/Gosperglidergun.png
+//    https://www.conwaylife.com/w/images/9/9f/Gosperglidergun.png
     board[52][26] = true;
     board[52][27] = true;
     board[53][26] = true;
@@ -163,11 +183,64 @@ Widget::Widget(QWidget *parent)
     setFixedSize(QSize(cols * cellSize + 1, rows * cellSize + 1));
 }
 
+void Widget::saveImage()
+{
+    auto paths = QStandardPaths::standardLocations(QStandardPaths::PicturesLocation);
+    QString dir = paths.count() > 0 ? paths.first() : QString();
+    QString fileName = QFileDialog::getSaveFileName(this,
+                                 "Save Image",
+                                 dir,
+                                 "Images (*.bmp *.xpm *.xbm)");
+    if (fileName.isEmpty())
+        return;
+
+    QImage img(cols, rows, QImage::Format::Format_Mono);
+    img.fill(1);
+    for (int col = 0; col < cols; ++col) {
+        for (int row = 0; row < rows; ++row) {
+            if (board[col][row])
+                img.setPixel(col, row, 0);
+        }
+    }
+    img.save(fileName);
+}
+
+void Widget::loadImage()
+{
+    auto paths = QStandardPaths::standardLocations(QStandardPaths::PicturesLocation);
+    QString dir = paths.count() > 0 ? paths.first() : QString();
+    QString fileName = QFileDialog::getOpenFileName(this,
+                                 "Load Image",
+                                 dir,
+                                 "Images (*.bmp *.xpm *.xbm)");
+    if (fileName.isEmpty())
+        return;
+    QImage img(fileName);
+    for (int col = 0; col < cols; ++col) {
+        for (int row = 0; row < rows; ++row) {
+            auto color = QColor(img.pixel(col,row));
+            board[col][row] = (!color.isValid() ||
+                                color.alpha() == 0 ||
+                                (color.green() == 255 &&
+                                    color.red() == 255 &&
+                                    color.blue() == 255)) ? false : true;
+        }
+    }
+    update();
+}
+
+void Widget::clear()
+{
+    board = QVector<QVector<bool>>(cols);
+    for (int col  = 0; col < cols; ++col)
+        board[col] = QVector<bool>(rows);
+    update();
+}
+
 void Widget::loadNext()
 {
-    QList<QList<bool>> newBoard;
+    QVector<QVector<bool>> newBoard(cols);
     for (int col  = 0; col < board.count(); ++col) {
-        newBoard.append(QList<bool>());
         for (int row = 0; row < board[col].count(); ++row) {
             int count = 0;
             bool alive = board[col][row];
@@ -202,7 +275,6 @@ void Widget::loadNext()
 
 void Widget::mouseMoveEvent(QMouseEvent *e)
 {
-//    qDebug() << "mousemove";
     e->accept();
     int x = e->pos().x();
     int y = e->pos().y();
@@ -210,7 +282,12 @@ void Widget::mouseMoveEvent(QMouseEvent *e)
     int row = y / cellSize;
     if (col < board.count() - 1) {
         if (row < board[col].count() - 1) {
-
+            if (e->buttons() & Qt::LeftButton &&
+                    (hoverCol != col || hoverRow != row))
+                board[col][row] = true;
+            else if(e->buttons() & Qt::RightButton &&
+                    (hoverCol != col || hoverRow != row))
+                board[col][row] = false;
             QString text = QString::number(row) + "," + QString::number(col) + (board[col][row] ? " - Alive" : " - Dead");
             hoverCol = col;
             hoverRow = row;
@@ -222,19 +299,16 @@ void Widget::mouseMoveEvent(QMouseEvent *e)
 
 void Widget::mousePressEvent(QMouseEvent *e)
 {
-    if (e->button() == Qt::LeftButton) {
+    if (e->button() == Qt::LeftButton || e->button() == Qt::RightButton) {
         e->accept();
         int x = e->pos().x();
         int y = e->pos().y();
         int col = x / cellSize;
         int row = y / cellSize;
-        qDebug() << "x" << x << "y" << y;
-        if (col < board.count() - 1) {
-            if (row < board[col].count() - 1) {
-                qDebug() << "cell" << col << row << board[col][row];
-                board[col][row] = !board[col][row];
-                update();
-            }
+        if (col < board.count() - 1 &&
+                row < board[col].count() - 1) {
+            board[col][row] = e->button() == Qt::LeftButton ? true : false;
+            update();
         }
     }
 }
@@ -247,12 +321,10 @@ QSize Widget::sizeHint() const
 void Widget::paintEvent(QPaintEvent *)
 {
     QPainter p(this);
-
-
     QColor green(0,200,0);
-    QColor dark(50,50,50);
-    QColor white(255,255,255);
-    p.setPen(white);
+    QColor bg = palette().color(QPalette::AlternateBase);
+    QColor border = palette().color(QPalette::Foreground);
+    p.setPen(border);
 
     for (int col  = 0; col < board.count(); ++col) {
         for (int row = 0; row < board[col].count(); ++row) {
@@ -261,7 +333,7 @@ void Widget::paintEvent(QPaintEvent *)
             int x = col * cellSize;
             int y = row * cellSize;
 
-            p.fillRect(QRect(x+1, y+1, cellSize-1, cellSize-1),alive ? green : dark);
+            p.fillRect(QRect(x+1, y+1, cellSize-1, cellSize-1),alive ? green : bg);
             if (hoverCol == col && hoverRow == row) {
                 p.drawRect(QRect(x, y, cellSize, cellSize));
             }

@@ -10,9 +10,12 @@ public:
     Widget(QWidget *parent = nullptr);
     ~Widget() = default;
 
+    void saveImage();
+    void loadImage();
+    void clear();
     void loadNext();
 private:
-    QList<QList<bool>> board;
+    QVector<QVector<bool>> board;
     int cellSize;
     int cols;
     int rows;
